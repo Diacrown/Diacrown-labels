@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diacrown — Label Sheet Generator</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<style>
+  :root{
+    --bg: #0A0F17;
+    --surface: #111A26;
+    --surface-raised: #15202E;
+    --border: #223348;
+    --border-soft: #1A2738;
+    --ink: #EAF1FA;
+    --ink-muted: #8FA3BA;
+    --ink-faint: #56697E;
+    --blue: #4A90E2;
+    --blue-bright: #74AEEF;
+    --garnet: #C1564A;
+    --emerald: #4FA98F;
+    --radius: 10px;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: "SF Mono", "Cascadia Mono", "Consolas", "Liberation Mono", monospace;
+  }
+
+  *{ box-sizing: border-box; }
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+
+  html, body{
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+  }
+
+  body{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 20px 56px;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  /* faint facet lines in the corners, the one decorative flourish */
+  body::before, body::after{
+    content: "";
+    position: fixed;
+    width: 520px;
+    height: 520px;
+    background-repeat: no-repeat;
+    background-size: contain;
+    opacity: 0.5;
+    pointer-events: none;
+    z-index: 0;
+  }
+  body::before{
+    top: -140px; left: -140px;
+    background-image: radial-gradient(circle at 30% 30%, rgba(74,144,226,0.10), transparent 60%);
+  }
+  body::after{
+    bottom: -160px; right: -160px;
+    background-image: radial-gradient(circle at 70% 70%, rgba(74,144,226,0.07), transparent 60%);
+  }
+
+  .wrap{
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 560px;
+  }
+
+  .eyebrow{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .eyebrow .mark{
+    width: 22px; height: 22px;
+    flex: none;
+  }
+  .eyebrow span{
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--blue);
+  }
+
+  h1{
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 30px;
+    line-height: 1.25;
+    margin: 0 0 10px;
+    color: var(--ink);
+    letter-spacing: 0.2px;
+  }
+
+  .lede{
+    font-size: 14.5px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    margin: 0 0 30px;
+    max-width: 480px;
+  }
+
+  .card{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    box-shadow: 0 20px 60px -30px rgba(0,0,0,0.6);
+  }
+
+  /* --- dropzone --- */
+  .dropzone{
+    position: relative;
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 30px 20px;
+    text-align: center;
+    cursor: pointer;
+    background:
+      radial-gradient(circle, rgba(74,144,226,0.16) 1px, transparent 1.4px) 0 0 / 22px 16px,
+      var(--surface-raised);
+    transition: border-color 160ms ease, background-color 160ms ease;
+  }
+  .dropzone:hover, .dropzone.dragover{
+    border-color: var(--blue);
+  }
+  .dropzone.dragover{
+    background-color: #211D17;
+  }
+  .dropzone:focus-visible{
+    outline: 2px solid var(--blue-bright);
+    outline-offset: 2px;
+  }
+  .dropzone input[type=file]{
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .dz-icon{
+    width: 34px;
+    height: 34px;
+    margin: 0 auto 14px;
+    color: var(--blue);
+  }
+
+  .dz-title{
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--ink);
+    margin: 0 0 4px;
+  }
+  .dz-sub{
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    margin: 0;
+  }
+  .dz-filename{
+    margin-top: 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--blue-bright);
+    background: rgba(74,144,226,0.08);
+    border: 1px solid rgba(74,144,226,0.25);
+    border-radius: 6px;
+    padding: 5px 10px;
+  }
+
+  /* --- actions --- */
+  .actions{
+    margin-top: 20px;
+  }
+
+  button.primary{
+    width: 100%;
+    padding: 13px 18px;
+    border-radius: 8px;
+    border: none;
+    background: var(--blue);
+    color: #1A1509;
+    font-size: 14.5px;
+    font-weight: 600;
+    font-family: var(--sans);
+    cursor: pointer;
+    transition: background-color 140ms ease, transform 140ms ease;
+  }
+  button.primary:hover:not(:disabled){ background: var(--blue-bright); }
+  button.primary:active:not(:disabled){ transform: translateY(1px); }
+  button.primary:disabled{
+    background: var(--border);
+    color: var(--ink-faint);
+    cursor: not-allowed;
+  }
+  button.primary:focus-visible{
+    outline: 2px solid var(--blue-bright);
+    outline-offset: 2px;
+  }
+
+  .spinner{
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(26,21,9,0.25);
+    border-top-color: #1A1509;
+    display: inline-block;
+    vertical-align: -2px;
+    margin-right: 8px;
+    animation: spin 700ms linear infinite;
+  }
+  @keyframes spin{ to{ transform: rotate(360deg); } }
+
+  /* --- result / status --- */
+  .status{
+    margin-top: 18px;
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 13.5px;
+    line-height: 1.55;
+    display: none;
+  }
+  .status.show{ display: block; }
+  .status.error{
+    background: rgba(182,84,63,0.10);
+    border: 1px solid rgba(182,84,63,0.35);
+    color: #E2A698;
+  }
+  .status.warn{
+    background: rgba(74,144,226,0.08);
+    border: 1px solid rgba(74,144,226,0.3);
+    color: var(--blue-bright);
+    margin-bottom: 10px;
+  }
+  .status.success{
+    background: rgba(92,148,121,0.10);
+    border: 1px solid rgba(92,148,121,0.35);
+    color: #BFE0CC;
+  }
+  .status strong{ color: inherit; }
+
+  .download-row{
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  a.download-btn{
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-radius: 7px;
+    background: var(--emerald);
+    color: #0E1B14;
+    font-size: 13.5px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background-color 140ms ease;
+  }
+  a.download-btn:hover{ background: #71B292; }
+  a.download-btn svg{ width: 14px; height: 14px; }
+
+  footer{
+    margin-top: 22px;
+    text-align: center;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    letter-spacing: 0.03em;
+  }
+  footer span{ color: var(--blue); }
+
+  details.help{
+    margin-top: 16px;
+  }
+  details.help summary{
+    cursor: pointer;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    user-select: none;
+  }
+  details.help summary:hover{ color: var(--blue-bright); }
+  details.help .help-body{
+    margin-top: 10px;
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--ink-faint);
+  }
+  details.help ul{ margin: 6px 0 0; padding-left: 18px; }
+  details.help li{ margin-bottom: 3px; }
+
+  @media (max-width: 480px){
+    .card{ padding: 20px; }
+    h1{ font-size: 25px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="eyebrow">
+    <svg class="mark" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2L4 9L12 22L20 9L12 2Z" stroke="#4A90E2" stroke-width="1.2" stroke-linejoin="round"/>
+      <path d="M4 9H20" stroke="#4A90E2" stroke-width="1" stroke-opacity="0.6"/>
+      <path d="M8 9L12 2L16 9" stroke="#4A90E2" stroke-width="1" stroke-opacity="0.6"/>
+    </svg>
+    <span>Diacrown &middot; Internal Tool</span>
+  </div>
+
+  <h1>Label Sheet Generator</h1>
+  <p class="lede">
+    Upload an invoice export straight from the ERP. Get back a print-ready
+    Word label sheet — sized and formatted for the 39&times;35&nbsp;mm laser
+    label stock, no manual mail merge required.
+  </p>
+
+  <div class="card">
+
+    <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload Excel file">
+      <input type="file" id="fileInput" accept=".xlsx,.xls" aria-hidden="true" tabindex="-1">
+      <svg class="dz-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 15V3M12 3L8 7M12 3L16 7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 15V18.5C4 19.8807 5.11929 21 6.5 21H17.5C18.8807 21 20 19.8807 20 18.5V15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <p class="dz-title">Drop your Excel export here</p>
+      <p class="dz-sub">or click to browse &nbsp;&middot;&nbsp; .xlsx / .xls</p>
+      <div id="filenameTag" style="display:none;">
+        <span class="dz-filename" id="filenameText"></span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="generateBtn" disabled>Generate label sheet</button>
+    </div>
+
+    <div class="status error" id="errorBox"></div>
+    <div class="status warn" id="warnBox"></div>
+    <div class="status success" id="successBox">
+      <div id="successText"></div>
+      <div class="download-row">
+        <a class="download-btn" id="downloadLink" download>
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 15V3M12 15L8 11M12 15L16 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4 18.5C4 19.8807 5.11929 21 6.5 21H17.5C18.8807 21 20 19.8807 20 18.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          Download Word file
+        </a>
+      </div>
+    </div>
+
+    <details class="help">
+      <summary>What does this expect from my Excel file?</summary>
+      <div class="help-body">
+        Any sheet that has these columns (raw ERP names or cleaned-up names
+        both work — matching is case-insensitive):
+        <ul>
+          <li><strong>SSP</strong> (or Lot #)</li>
+          <li><strong>Item#</strong></li>
+          <li><strong>StnTyp</strong> (Stone Type)</li>
+          <li><strong>Shp</strong> (Shape)</li>
+          <li><strong>Col</strong> (Color)</li>
+          <li><strong>Units</strong> (carat weight)</li>
+          <li><strong>Lab</strong> + <strong>Report#</strong> (or one combined "Lab Report Number" column)</li>
+          <li><strong>L</strong>, <strong>W</strong>, <strong>D</strong> (Length / Width / Depth)</li>
+        </ul>
+        No need to delete other columns first — extra columns are ignored.
+        Every row becomes one label, 40 to a page.
+      </div>
+    </details>
+
+  </div>
+
+  <footer>Built for <span>Diacrown</span> &middot; runs entirely in your browser, nothing is uploaded anywhere</footer>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ----------------------------------------------------------------------
+  // Layout constants — mirrors the proven sticker template exactly.
+  // ----------------------------------------------------------------------
+  const COLS = 5;
+  const ROWS = 8;
+  const PER_PAGE = COLS * ROWS;
+  const COL_WIDTH_TW = 2296;
+  const ROW_HEIGHT_TW = 2070;
+  const CELL_MARGIN_LR_TW = 43;
+  const SPACER_AFTER_SSP = " ".repeat(15);
+  const SPACER_BEFORE_LAB = " ".repeat(7);
+
+  const CANDIDATES = {
+    ssp:    ["ssp", "fssp", "ssp any", "lot #", "lot#"],
+    item:   ["item#", "item #", "item", "item number"],
+    stntyp: ["stntyp", "stone type", "gem"],
+    shp:    ["shp", "shape"],
+    col:    ["col", "color", "colour"],
+    units:  ["units", "wt", "weight", "carat", "carats", "cts"],
+    lab_report_combined: ["lab report number", "lab report#", "lab report #", "lab-report", "labreport"],
+    lab:    ["lab"],
+    report: ["report#", "report #", "report number", "report"],
+    length: ["l", "length"],
+    width:  ["w", "width"],
+    depth:  ["d", "depth"],
+  };
+
+  const REQUIRED = ["ssp", "item", "stntyp", "shp", "col", "units"];
+
+  // ----------------------------------------------------------------------
+  // Helpers
+  // ----------------------------------------------------------------------
+  function normalize(h){
+    return (h === null || h === undefined) ? "" : String(h).trim().toLowerCase();
+  }
+
+  function isBlank(v){
+    return v === null || v === undefined || v === "";
+  }
+
+  function nz(v){
+    if (isBlank(v)) return false;
+    const f = parseFloat(v);
+    if (!isNaN(f) && isFinite(f)) return f !== 0;
+    return true;
+  }
+
+  function fmtNum(v){
+    if (isBlank(v)) return null;
+    const f = parseFloat(v);
+    if (isNaN(f)) return String(v);
+    if (f === Math.trunc(f)) return String(Math.trunc(f));
+    let s = f.toFixed(2);
+    s = s.replace(/0+$/, "").replace(/\.$/, "");
+    return s;
+  }
+
+  function escapeXml(s){
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function buildHeaderMap(headerRow){
+    const normToOrig = {};
+    headerRow.forEach((h, idx) => {
+      const n = normalize(h);
+      if (n && !(n in normToOrig)) normToOrig[n] = idx;
+    });
+    const fieldIdx = {};
+    for (const field in CANDIDATES){
+      for (const name of CANDIDATES[field]){
+        if (name in normToOrig){ fieldIdx[field] = normToOrig[name]; break; }
+      }
+    }
+    return fieldIdx;
+  }
+
+  function buildRecords(dataRows, fieldIdx){
+    const records = [];
+    for (const row of dataRows){
+      const get = (field) => {
+        const idx = fieldIdx[field];
+        return (idx !== undefined && idx < row.length) ? row[idx] : null;
+      };
+
+      const ssp = get("ssp"), item = get("item");
+      const stntyp = get("stntyp"), shp = get("shp"), col = get("col");
+      const units = get("units");
+      const length = get("length"), width = get("width"), depth = get("depth");
+
+      const allBlank = [ssp, item, stntyp, shp, col, units, length, width, depth]
+        .every(isBlank);
+      if (allBlank) continue;
+
+      const combined = get("lab_report_combined");
+      let f10;
+      if (!isBlank(combined)){
+        f10 = String(combined);
+      } else {
+        const lab = get("lab"), report = get("report");
+        f10 = (!isBlank(lab) && !isBlank(report)) ? `${lab} - ${report}` : "";
+      }
+
+      let f6;
+      if (!isBlank(units)){
+        const fu = parseFloat(units);
+        f6 = isNaN(fu) ? `${units} Cts` : `${fu.toFixed(2)} Cts`;
+      } else {
+        f6 = "";
+      }
+
+      let f14;
+      if (nz(length) || nz(width) || nz(depth)){
+        f14 = `${fmtNum(length) ?? "0"} - ${fmtNum(width) ?? "0"} X ${fmtNum(depth) ?? "0"}`;
+      } else {
+        f14 = "";
+      }
+
+      records.push({
+        ssp: ssp ?? "", item: item ?? "", f10,
+        stntyp: stntyp ?? "", shp: shp ?? "", col: col ?? "",
+        f6, f14,
+      });
+    }
+    return records;
+  }
+
+  // ----------------------------------------------------------------------
+  // OOXML construction — hand-built XML, zipped with JSZip.
+  // Mirrors the proven sticker template's structure exactly.
+  // ----------------------------------------------------------------------
+  function para(text, sizeHalfPt){
+    sizeHalfPt = sizeHalfPt || 24;
+    const t = escapeXml(text);
+    return (
+      `<w:p><w:pPr><w:spacing w:after="0" w:before="0" w:line="240" w:lineRule="auto"/>` +
+      `<w:rPr><w:b/><w:sz w:val="${sizeHalfPt}"/><w:szCs w:val="${sizeHalfPt}"/></w:rPr></w:pPr>` +
+      `<w:r><w:rPr><w:b/><w:sz w:val="${sizeHalfPt}"/><w:szCs w:val="${sizeHalfPt}"/></w:rPr>` +
+      `<w:t xml:space="preserve">${t}</w:t></w:r></w:p>`
+    );
+  }
+
+  function buildCellXml(rec){
+    let linesXml;
+    if (!rec){
+      linesXml = "<w:p/>";
+    } else {
+      const line1 = `${rec.ssp}${SPACER_AFTER_SSP}${rec.item}`;
+      const line2 = `${SPACER_BEFORE_LAB}${rec.f10}`;
+      const line3 = `Gem \u2013 ${rec.stntyp}`;
+      const line4 = `Shape \u2013 ${rec.shp}`;
+      const line5 = `Col \u2013 ${rec.col}`;
+      const line6 = `Wt \u2013 ${rec.f6}`;
+      const line7 = `MM \u2013 ${rec.f14}`;
+      linesXml = para(line1) + para(line2) + para(line3) + para(line4) +
+                 para(line5) + para(line6) + para(line7, 22) + para("");
+    }
+    return `<w:tc><w:tcPr><w:tcW w:w="${COL_WIDTH_TW}" w:type="dxa"/></w:tcPr>${linesXml}</w:tc>`;
+  }
+
+  function buildTableXml(chunk){
+    let grid = "";
+    for (let c = 0; c < COLS; c++) grid += `<w:gridCol w:w="${COL_WIDTH_TW}"/>`;
+
+    let rowsXml = "";
+    for (let r = 0; r < ROWS; r++){
+      let cellsXml = "";
+      for (let c = 0; c < COLS; c++){
+        const idx = r * COLS + c;
+        const rec = idx < chunk.length ? chunk[idx] : null;
+        cellsXml += buildCellXml(rec);
+      }
+      rowsXml += `<w:tr><w:trPr><w:cantSplit/><w:trHeight w:hRule="exact" w:val="${ROW_HEIGHT_TW}"/></w:trPr>${cellsXml}</w:tr>`;
+    }
+
+    const borders =
+      `<w:tblBorders>` +
+      `<w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>` +
+      `<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>` +
+      `<w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>` +
+      `<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>` +
+      `<w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/>` +
+      `<w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>` +
+      `</w:tblBorders>`;
+    const cellmar =
+      `<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/>` +
+      `<w:left w:w="${CELL_MARGIN_LR_TW}" w:type="dxa"/><w:right w:w="${CELL_MARGIN_LR_TW}" w:type="dxa"/></w:tblCellMar>`;
+    const tblPr = `<w:tblPr><w:tblW w:w="0" w:type="auto"/>${borders}<w:tblLayout w:type="fixed"/>${cellmar}</w:tblPr>`;
+
+    return `<w:tbl>${tblPr}<w:tblGrid>${grid}</w:tblGrid>${rowsXml}</w:tbl>`;
+  }
+
+  const PAGE_BREAK = `<w:p><w:r><w:br w:type="page"/></w:r></w:p>`;
+  const SECT_PR =
+    `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>` +
+    `<w:pgMar w:top="170" w:right="255" w:bottom="0" w:left="255" w:header="720" w:footer="720" w:gutter="0"/>` +
+    `<w:cols w:space="720"/></w:sectPr>`;
+
+  const CONTENT_TYPES =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+    `<Default Extension="xml" ContentType="application/xml"/>` +
+    `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+    `<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>` +
+    `</Types>`;
+
+  const RELS_ROOT =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>` +
+    `</Relationships>`;
+
+  const RELS_DOCUMENT =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+    `</Relationships>`;
+
+  const STYLES_XML =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+    `<w:docDefaults><w:rPrDefault><w:rPr>` +
+    `<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="24"/><w:szCs w:val="24"/>` +
+    `</w:rPr></w:rPrDefault></w:docDefaults>` +
+    `<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>` +
+    `</w:styles>`;
+
+  function buildDocumentXml(records){
+    const chunks = [];
+    for (let i = 0; i < records.length; i += PER_PAGE) chunks.push(records.slice(i, i + PER_PAGE));
+    if (chunks.length === 0) chunks.push([]);
+
+    let body = "";
+    chunks.forEach((chunk, i) => {
+      body += buildTableXml(chunk);
+      if (i < chunks.length - 1) body += PAGE_BREAK;
+    });
+
+    const xml =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+      `<w:body>${body}${SECT_PR}</w:body></w:document>`;
+
+    return { xml, pages: chunks.length };
+  }
+
+  async function buildDocxBlob(records){
+    const { xml } = buildDocumentXml(records);
+    const zip = new JSZip();
+    zip.file("[Content_Types].xml", CONTENT_TYPES);
+    zip.file("_rels/.rels", RELS_ROOT);
+    zip.file("word/document.xml", xml);
+    zip.file("word/_rels/document.xml.rels", RELS_DOCUMENT);
+    zip.file("word/styles.xml", STYLES_XML);
+    return zip.generateAsync({
+      type: "blob",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+  }
+
+  // ----------------------------------------------------------------------
+  // UI wiring
+  // ----------------------------------------------------------------------
+  const dropzone = document.getElementById("dropzone");
+  const fileInput = document.getElementById("fileInput");
+  const filenameTag = document.getElementById("filenameTag");
+  const filenameText = document.getElementById("filenameText");
+  const generateBtn = document.getElementById("generateBtn");
+  const errorBox = document.getElementById("errorBox");
+  const warnBox = document.getElementById("warnBox");
+  const successBox = document.getElementById("successBox");
+  const successText = document.getElementById("successText");
+  const downloadLink = document.getElementById("downloadLink");
+
+  let currentFile = null;
+  let currentObjectUrl = null;
+
+  function resetStatus(){
+    errorBox.classList.remove("show");
+    warnBox.classList.remove("show");
+    successBox.classList.remove("show");
+    errorBox.textContent = "";
+    warnBox.textContent = "";
+    if (currentObjectUrl){ URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = null; }
+  }
+
+  function showError(msg){
+    resetStatus();
+    errorBox.textContent = msg;
+    errorBox.classList.add("show");
+  }
+
+  function setFile(file){
+    if (!file) return;
+    const okExt = /\.xlsx?$/i.test(file.name);
+    if (!okExt){
+      showError("That doesn't look like an Excel file. Please choose a .xlsx or .xls export.");
+      return;
+    }
+    currentFile = file;
+    filenameText.textContent = file.name;
+    filenameTag.style.display = "inline-block";
+    generateBtn.disabled = false;
+    resetStatus();
+  }
+
+  dropzone.addEventListener("click", () => fileInput.click());
+  dropzone.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " "){ e.preventDefault(); fileInput.click(); }
+  });
+  fileInput.addEventListener("change", (e) => setFile(e.target.files[0]));
+
+  ["dragenter", "dragover"].forEach(evt =>
+    dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.add("dragover"); })
+  );
+  ["dragleave", "drop"].forEach(evt =>
+    dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove("dragover"); })
+  );
+  dropzone.addEventListener("drop", (e) => {
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) setFile(file);
+  });
+
+  generateBtn.addEventListener("click", async () => {
+    if (!currentFile) return;
+    resetStatus();
+    generateBtn.disabled = true;
+    generateBtn.innerHTML = `<span class="spinner"></span>Generating&hellip;`;
+
+    try {
+      const data = await currentFile.arrayBuffer();
+      const wb = XLSX.read(data, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
+
+      if (!rows || rows.length === 0){
+        throw new Error("That sheet appears to be empty.");
+      }
+
+      const headerRow = rows[0];
+      const fieldIdx = buildHeaderMap(headerRow);
+
+      const missing = REQUIRED.filter(f => !(f in fieldIdx));
+      if (missing.length){
+        warnBox.textContent =
+          `Couldn't find a column for: ${missing.join(", ")}. Those fields will be left blank on the labels.`;
+        warnBox.classList.add("show");
+      }
+
+      const records = buildRecords(rows.slice(1), fieldIdx);
+      if (records.length === 0){
+        throw new Error("No data rows were found in this sheet.");
+      }
+
+      const { pages } = buildDocumentXml(records);
+      const blob = await buildDocxBlob(records);
+
+      currentObjectUrl = URL.createObjectURL(blob);
+      const outName = currentFile.name.replace(/\.xlsx?$/i, "") + "_Labels.docx";
+      downloadLink.href = currentObjectUrl;
+      downloadLink.setAttribute("download", outName);
+
+      successText.innerHTML =
+        `<strong>${records.length}</strong> label${records.length === 1 ? "" : "s"} generated ` +
+        `across <strong>${pages}</strong> page${pages === 1 ? "" : "s"}.`;
+      successBox.classList.add("show");
+    } catch (err){
+      console.error(err);
+      showError(err.message || "Something went wrong while generating the label sheet.");
+    } finally {
+      generateBtn.disabled = !currentFile;
+      generateBtn.textContent = "Generate label sheet";
+    }
+  });
+
+})();
+</script>
+
+</body>
+</html>
