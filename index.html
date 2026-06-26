@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Diacrown — Label Sheet Generator</title>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- xlsx + jszip are loaded lazily on first "Generate" click (see ensureLibs)
+     so the page itself paints instantly instead of blocking on ~1MB of CDN JS. -->
 
 <style>
   :root{
@@ -349,9 +349,9 @@
       <button class="primary" id="generateBtn" disabled>Generate label sheet</button>
     </div>
 
-    <div class="status error" id="errorBox"></div>
-    <div class="status warn" id="warnBox"></div>
-    <div class="status success" id="successBox">
+    <div class="status error" id="errorBox" role="alert" aria-live="assertive"></div>
+    <div class="status warn" id="warnBox" role="status" aria-live="polite"></div>
+    <div class="status success" id="successBox" role="status" aria-live="polite">
       <div id="successText"></div>
       <div class="download-row">
         <a class="download-btn" id="downloadLink" download>
@@ -378,7 +378,13 @@
           <li><strong>Units</strong> (carat weight)</li>
           <li><strong>Lab</strong> + <strong>Report#</strong> (or one combined "Lab Report Number" column)</li>
           <li><strong>L</strong>, <strong>W</strong>, <strong>D</strong> (Length / Width / Depth)</li>
+          <li><strong>IT</strong> (optional) &mdash; <strong>SS</strong> = Single Stone, <strong>PP</strong> = Parcel Packets</li>
+          <li><strong>Remarks</strong> (optional) &mdash; used for the MM line on PP rows</li>
         </ul>
+        The MM line follows the IT column: <strong>SS</strong> rows show the
+        L&nbsp;-&nbsp;W&nbsp;X&nbsp;D dimensions, while <strong>PP</strong> rows
+        show whatever is in the Remarks column instead. If there's no IT column,
+        every row falls back to dimensions as before.
         No need to delete other columns first — extra columns are ignored.
         Every row becomes one label, 40 to a page.
       </div>
@@ -393,6 +399,41 @@
 <script>
 (function(){
   "use strict";
+
+  // ----------------------------------------------------------------------
+  // Lazy CDN loader — pulls xlsx + jszip only when the user first generates,
+  // so the page loads instantly. Resolves once both globals are available.
+  // ----------------------------------------------------------------------
+  const CDN_LIBS = [
+    "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js",
+  ];
+  let libsPromise = null;
+
+  function loadScript(src){
+    return new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.async = true;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error(`Failed to load ${src}`));
+      document.head.appendChild(s);
+    });
+  }
+
+  function ensureLibs(){
+    if (window.XLSX && window.JSZip) return Promise.resolve();
+    if (!libsPromise){
+      libsPromise = Promise.all(CDN_LIBS.map(loadScript))
+        .then(() => {
+          if (!window.XLSX || !window.JSZip){
+            throw new Error("Spreadsheet libraries did not initialise.");
+          }
+        })
+        .catch((err) => { libsPromise = null; throw err; });
+    }
+    return libsPromise;
+  }
 
   // ----------------------------------------------------------------------
   // Layout constants — mirrors the proven sticker template exactly.
@@ -419,6 +460,8 @@
     length: ["l", "length"],
     width:  ["w", "width"],
     depth:  ["d", "depth"],
+    it:     ["it", "it type", "item type"],
+    remarks:["remarks", "remark", "rmks"],
   };
 
   const REQUIRED = ["ssp", "item", "stntyp", "shp", "col", "units"];
@@ -485,6 +528,7 @@
       const stntyp = get("stntyp"), shp = get("shp"), col = get("col");
       const units = get("units");
       const length = get("length"), width = get("width"), depth = get("depth");
+      const it = get("it"), remarks = get("remarks");
 
       const allBlank = [ssp, item, stntyp, shp, col, units, length, width, depth]
         .every(isBlank);
@@ -507,8 +551,15 @@
         f6 = "";
       }
 
+      // MM line.
+      //   IT == "SS" (Single Stone) -> dimensions L - W X D (original logic)
+      //   IT == "PP" (Parcel Packets) -> take the text from the Remarks column
+      //   IT missing/other/blank -> fall back to dimensions (original behaviour)
+      const itCode = isBlank(it) ? "" : String(it).trim().toUpperCase();
       let f14;
-      if (nz(length) || nz(width) || nz(depth)){
+      if (itCode.startsWith("PP")){
+        f14 = isBlank(remarks) ? "" : String(remarks).trim();
+      } else if (nz(length) || nz(width) || nz(depth)){
         f14 = `${fmtNum(length) ?? "0"} - ${fmtNum(width) ?? "0"} X ${fmtNum(depth) ?? "0"}`;
       } else {
         f14 = "";
@@ -727,6 +778,11 @@
     generateBtn.innerHTML = `<span class="spinner"></span>Generating&hellip;`;
 
     try {
+      try {
+        await ensureLibs();
+      } catch (e){
+        throw new Error("Couldn't load the spreadsheet libraries. Check your internet connection and try again.");
+      }
       const data = await currentFile.arrayBuffer();
       const wb = XLSX.read(data, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
